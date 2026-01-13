@@ -1,269 +1,127 @@
-from flask import Flask, render_template, request, redirect, flash, session, jsonify
-from flask_login import (
-    LoginManager, login_user, login_required,
-    logout_user, UserMixin, current_user
-)
-import sqlite3
-import os
-import pandas as pd
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ company_name }}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    td, th { font-size: 14px; vertical-align: middle; }
+    .actions a { margin-right: 4px; white-space: nowrap; }
+    input.small { width: 120px; }
+    .sample-link { font-size: 13px; margin-left: 6px; }
+  </style>
+</head>
+<body class="bg-light">
 
-# ---------------- APP ----------------
-app = Flask(__name__)
-app.secret_key = "supersecretkey"
+<div class="container-fluid mt-3">
+<h4 class="text-center">{{ company_name }}</h4>
 
-login_manager = LoginManager(app)
-login_manager.login_view = "/"
+<!-- UPLOAD SECTION -->
+<div class="row mb-3">
+  <div class="col-md-6">
+    <form method="post" action="/upload/balance" enctype="multipart/form-data">
+      <label class="form-label">
+        Upload Balance Excel
+        <span class="sample-link">
+          (
+          <a href="/static/samples/tally_outstanding.xlsx" download>
+            Download tally_outstanding
+          </a>
+          )
+        </span>
+      </label>
+      <input type="file" name="file" class="form-control mb-1" required>
+      <button class="btn btn-primary btn-sm">Upload Balance</button>
+    </form>
+  </div>
 
-DB_PATH = "data/db.sqlite"
+  <div class="col-md-6">
+    <form method="post" action="/upload/contacts" enctype="multipart/form-data">
+      <label class="form-label">
+        Upload Contact Excel
+        <span class="sample-link">
+          (
+          <a href="/static/samples/party_contacts.xlsx" download>
+            Download party_contacts
+          </a>
+          )
+        </span>
+      </label>
+      <input type="file" name="file" class="form-control mb-1" required>
+      <button class="btn btn-secondary btn-sm">Upload Contacts</button>
+    </form>
+  </div>
+</div>
 
-# ---------------- DATABASE ----------------
-def get_db():
-    os.makedirs("data", exist_ok=True)
-    return sqlite3.connect(DB_PATH)
+{% for m in get_flashed_messages() %}
+<div class="alert alert-warning">{{ m }}</div>
+{% endfor %}
 
-def init_db():
-    conn = get_db()
-    c = conn.cursor()
+<!-- TABLE -->
+<table class="table table-bordered bg-white table-sm">
+<thead class="table-dark">
+<tr>
+<th>#</th>
+<th>Party</th>
+<th>Mobile</th>
+<th>Balance</th>
+<th>Actions</th>
+</tr>
+</thead>
+<tbody>
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
-        password TEXT
-    )
-    """)
+{% for d in data %}
+{% set msg =
+"Dear " ~ d[2] ~
+", As per our records, an outstanding balance of ₹" ~ d[5] ~
+" is pending from your side. Kindly arrange the payment at the earliest. "
+~ "Thank you – " ~ company_name
+%}
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS companies (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        company_name TEXT
-    )
-    """)
+<tr>
+<td>{{ loop.index }}</td>
+<td>{{ d[2] }}</td>
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS debtors (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company_id INTEGER,
-        party TEXT,
-        mobile TEXT,
-        whatsapp TEXT,
-        balance REAL DEFAULT 0
-    )
-    """)
+<td>
+<input class="form-control form-control-sm small"
+value="{{ d[3] or '' }}"
+onchange="updateNumber('{{ d[0] }}', this.value)">
+</td>
 
-    conn.commit()
-    conn.close()
+<td>₹ {{ d[5] }}</td>
 
-# ---------------- USER ----------------
-class User(UserMixin):
-    def __init__(self, id, username):
-        self.id = id
-        self.username = username
+<td class="actions">
+{% if d[3] %}
+<a class="btn btn-success btn-sm" target="_blank"
+href="https://wa.me/91{{ d[3] }}?text={{ msg|urlencode }}">WhatsApp</a>
 
-@login_manager.user_loader
-def load_user(user_id):
-    conn = get_db()
-    c = conn.cursor()
-    row = c.execute(
-        "SELECT id, username FROM users WHERE id=?",
-        (user_id,)
-    ).fetchone()
-    conn.close()
-    return User(row[0], row[1]) if row else None
+<a class="btn btn-primary btn-sm" href="tel:{{ d[3] }}">Call</a>
 
-# ---------------- AUTH ----------------
-@app.route("/", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        u = request.form["username"]
-        p = request.form["password"]
+<a class="btn btn-warning btn-sm"
+href="sms:{{ d[3] }}?body={{ msg|urlencode }}">SMS</a>
+{% else %}
+<span class="text-muted">No Number</span>
+{% endif %}
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
 
-        conn = get_db()
-        c = conn.cursor()
-        row = c.execute(
-            "SELECT id, username FROM users WHERE username=? AND password=?",
-            (u, p)
-        ).fetchone()
-        conn.close()
+<div class="text-center">
+<a href="/companies">Change Company</a> |
+<a href="/logout">Logout</a>
+</div>
+</div>
 
-        if row:
-            login_user(User(row[0], row[1]))
-            return redirect("/companies")
+<script>
+function updateNumber(id, number) {
+  fetch("/update-number", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id:id, number:number})
+  });
+}
+</script>
 
-        flash("Invalid login")
-
-    return render_template("login.html")
-
-@app.route("/signup", methods=["GET", "POST"])
-def signup():
-    if request.method == "POST":
-        u = request.form["username"]
-        p = request.form["password"]
-
-        conn = get_db()
-        c = conn.cursor()
-        try:
-            c.execute(
-                "INSERT INTO users(username,password) VALUES (?,?)",
-                (u, p)
-            )
-            conn.commit()
-            flash("Account created. Login now.")
-            return redirect("/")
-        except:
-            flash("Username already exists")
-        finally:
-            conn.close()
-
-    return render_template("signup.html")
-
-@app.route("/logout")
-def logout():
-    logout_user()
-    session.clear()
-    return redirect("/")
-
-# ---------------- COMPANIES ----------------
-@app.route("/companies", methods=["GET", "POST"])
-@login_required
-def companies():
-    conn = get_db()
-    c = conn.cursor()
-
-    if request.method == "POST":
-        name = request.form["company_name"]
-        c.execute(
-            "INSERT INTO companies(user_id, company_name) VALUES (?,?)",
-            (current_user.id, name)
-        )
-        conn.commit()
-
-    rows = c.execute(
-        "SELECT id, company_name FROM companies WHERE user_id=?",
-        (current_user.id,)
-    ).fetchall()
-    conn.close()
-
-    return render_template("company_list.html", companies=rows)
-
-@app.route("/set-company/<int:cid>")
-@login_required
-def set_company(cid):
-    session["company_id"] = cid
-    return redirect("/dashboard")
-
-# ---------------- DASHBOARD ----------------
-@app.route("/dashboard")
-@login_required
-def dashboard():
-    cid = session.get("company_id")
-    if not cid:
-        return redirect("/companies")
-
-    conn = get_db()
-    c = conn.cursor()
-
-    company = c.execute(
-        "SELECT company_name FROM companies WHERE id=?",
-        (cid,)
-    ).fetchone()
-
-    data = c.execute(
-        "SELECT * FROM debtors WHERE company_id=?",
-        (cid,)
-    ).fetchall()
-
-    conn.close()
-
-    return render_template(
-        "dashboard.html",
-        company_name=company[0],
-        data=data
-    )
-
-# ---------------- UPLOAD BALANCE ----------------
-@app.route("/upload/balance", methods=["POST"])
-@login_required
-def upload_balance():
-    try:
-        cid = session.get("company_id")
-        df = pd.read_excel(request.files["file"], dtype=str)
-
-        conn = get_db()
-        c = conn.cursor()
-
-        for _, r in df.iterrows():
-            party = str(r.iloc[0]).strip()
-            balance = float(str(r.iloc[1]).replace(",", "").strip())
-
-            c.execute("""
-                INSERT INTO debtors(company_id, party, balance)
-                VALUES (?,?,?)
-            """, (cid, party, balance))
-
-        conn.commit()
-        conn.close()
-        flash("Balance uploaded successfully")
-
-    except Exception as e:
-        flash(f"Balance upload error: {e}")
-
-    return redirect("/dashboard")
-
-# ---------------- UPLOAD CONTACTS (FIXED .0 ISSUE) ----------------
-@app.route("/upload/contacts", methods=["POST"])
-@login_required
-def upload_contacts():
-    try:
-        cid = session.get("company_id")
-
-        # dtype=str is MOST IMPORTANT
-        df = pd.read_excel(request.files["file"], dtype=str)
-
-        conn = get_db()
-        c = conn.cursor()
-
-        for _, r in df.iterrows():
-            party = str(r.iloc[0]).strip()
-            mobile = str(r.iloc[1]).strip()
-
-            # Excel .0 FIX
-            if mobile.endswith(".0"):
-                mobile = mobile[:-2]
-
-            c.execute("""
-                UPDATE debtors
-                SET mobile=?, whatsapp=?
-                WHERE company_id=? AND party=?
-            """, (mobile, mobile, cid, party))
-
-        conn.commit()
-        conn.close()
-        flash("Contacts uploaded successfully")
-
-    except Exception as e:
-        flash(f"Contact upload error: {e}")
-
-    return redirect("/dashboard")
-
-# ---------------- UPDATE NUMBER FROM WEBSITE ----------------
-@app.route("/update-number", methods=["POST"])
-@login_required
-def update_number():
-    data = request.json
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(
-        "UPDATE debtors SET mobile=?, whatsapp=? WHERE id=?",
-        (data["number"], data["number"], data["id"])
-    )
-    conn.commit()
-    conn.close()
-    return jsonify(success=True)
-
-# ---------------- INIT ----------------
-init_db()
-
-if __name__ == "__main__":
-    app.run(debug=True)
+</body>
+</html>

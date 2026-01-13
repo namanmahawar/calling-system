@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, flash, session
+from flask import Flask, render_template, request, redirect, flash, session, jsonify
 from flask_login import (
     LoginManager, login_user, login_required,
     logout_user, UserMixin, current_user
@@ -48,10 +48,7 @@ def init_db():
         party TEXT,
         mobile TEXT,
         whatsapp TEXT,
-        balance REAL DEFAULT 0,
-        remarks TEXT,
-        commit_date TEXT,
-        call_done INTEGER DEFAULT 0
+        balance REAL DEFAULT 0
     )
     """)
 
@@ -93,7 +90,8 @@ def login():
         if row:
             login_user(User(row[0], row[1]))
             return redirect("/companies")
-        flash("Invalid username or password")
+
+        flash("Invalid login")
 
     return render_template("login.html")
 
@@ -111,7 +109,7 @@ def signup():
                 (u, p)
             )
             conn.commit()
-            flash("Account created. Please login.")
+            flash("Account created. Login now.")
             return redirect("/")
         except:
             flash("Username already exists")
@@ -122,8 +120,8 @@ def signup():
 
 @app.route("/logout")
 def logout():
-    session.clear()
     logout_user()
+    session.clear()
     return redirect("/")
 
 # ---------------- COMPANIES ----------------
@@ -167,8 +165,8 @@ def dashboard():
     c = conn.cursor()
 
     company = c.execute(
-        "SELECT company_name FROM companies WHERE id=? AND user_id=?",
-        (cid, current_user.id)
+        "SELECT company_name FROM companies WHERE id=?",
+        (cid,)
     ).fetchone()
 
     data = c.execute(
@@ -178,56 +176,78 @@ def dashboard():
 
     conn.close()
 
-    if not company:
-        return redirect("/companies")
-
     return render_template(
         "dashboard.html",
         company_name=company[0],
         data=data
     )
 
-# ---------------- UPLOADS ----------------
+# ---------------- UPLOAD BALANCE ----------------
 @app.route("/upload/balance", methods=["POST"])
 @login_required
 def upload_balance():
-    cid = session.get("company_id")
-    df = pd.read_excel(request.files["file"])
+    try:
+        cid = session.get("company_id")
+        df = pd.read_excel(request.files["file"])
 
-    conn = get_db()
-    c = conn.cursor()
+        conn = get_db()
+        c = conn.cursor()
 
-    for _, r in df.iterrows():
-        c.execute(
-            "INSERT INTO debtors(company_id, party, balance) VALUES (?,?,?)",
-            (cid, str(r[0]).strip(), float(r[1]))
-        )
+        for _, r in df.iterrows():
+            c.execute("""
+                INSERT INTO debtors(company_id, party, balance)
+                VALUES (?,?,?)
+            """, (cid, str(r.iloc[0]).strip(), float(r.iloc[1])))
 
-    conn.commit()
-    conn.close()
-    flash("Balance uploaded")
+        conn.commit()
+        conn.close()
+        flash("Balance uploaded successfully")
+    except Exception as e:
+        flash(f"Balance upload error: {e}")
+
     return redirect("/dashboard")
 
+# ---------------- UPLOAD CONTACTS ----------------
 @app.route("/upload/contacts", methods=["POST"])
 @login_required
 def upload_contacts():
-    cid = session.get("company_id")
-    df = pd.read_excel(request.files["file"])
+    try:
+        cid = session.get("company_id")
+        df = pd.read_excel(request.files["file"])
 
+        conn = get_db()
+        c = conn.cursor()
+
+        for _, r in df.iterrows():
+            mobile = str(r.iloc[1]).strip()
+            c.execute("""
+                UPDATE debtors
+                SET mobile=?, whatsapp=?
+                WHERE company_id=? AND party=?
+            """, (mobile, mobile, cid, str(r.iloc[0]).strip()))
+
+        conn.commit()
+        conn.close()
+        flash("Contacts uploaded successfully")
+    except Exception as e:
+        flash(f"Contact upload error: {e}")
+
+    return redirect("/dashboard")
+
+# ---------------- UPDATE NUMBER INLINE ----------------
+@app.route("/update-number", methods=["POST"])
+@login_required
+def update_number():
+    data = request.json
     conn = get_db()
     c = conn.cursor()
-
-    for _, r in df.iterrows():
-        mobile = str(r[1]).strip()
-        c.execute(
-            "UPDATE debtors SET mobile=?, whatsapp=? WHERE company_id=? AND party=?",
-            (mobile, mobile, cid, str(r[0]).strip())
-        )
-
+    c.execute(
+        "UPDATE debtors SET mobile=?, whatsapp=? WHERE id=?",
+        (data["number"], data["number"], data["id"])
+    )
     conn.commit()
     conn.close()
-    flash("Contacts uploaded")
-    return redirect("/dashboard")
+    return jsonify(success=True)
 
 # ---------------- INIT ----------------
 init_db()

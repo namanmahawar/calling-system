@@ -188,53 +188,66 @@ def dashboard():
 def upload_balance():
     try:
         cid = session.get("company_id")
-        df = pd.read_excel(request.files["file"])
+        df = pd.read_excel(request.files["file"], dtype=str)
 
         conn = get_db()
         c = conn.cursor()
 
         for _, r in df.iterrows():
+            party = str(r.iloc[0]).strip()
+            balance = float(str(r.iloc[1]).replace(",", "").strip())
+
             c.execute("""
                 INSERT INTO debtors(company_id, party, balance)
                 VALUES (?,?,?)
-            """, (cid, str(r.iloc[0]).strip(), float(r.iloc[1])))
+            """, (cid, party, balance))
 
         conn.commit()
         conn.close()
         flash("Balance uploaded successfully")
+
     except Exception as e:
         flash(f"Balance upload error: {e}")
 
     return redirect("/dashboard")
 
-# ---------------- UPLOAD CONTACTS ----------------
+# ---------------- UPLOAD CONTACTS (FIXED .0 ISSUE) ----------------
 @app.route("/upload/contacts", methods=["POST"])
 @login_required
 def upload_contacts():
     try:
         cid = session.get("company_id")
-        df = pd.read_excel(request.files["file"])
+
+        # dtype=str is MOST IMPORTANT
+        df = pd.read_excel(request.files["file"], dtype=str)
 
         conn = get_db()
         c = conn.cursor()
 
         for _, r in df.iterrows():
+            party = str(r.iloc[0]).strip()
             mobile = str(r.iloc[1]).strip()
+
+            # Excel .0 FIX
+            if mobile.endswith(".0"):
+                mobile = mobile[:-2]
+
             c.execute("""
                 UPDATE debtors
                 SET mobile=?, whatsapp=?
                 WHERE company_id=? AND party=?
-            """, (mobile, mobile, cid, str(r.iloc[0]).strip()))
+            """, (mobile, mobile, cid, party))
 
         conn.commit()
         conn.close()
         flash("Contacts uploaded successfully")
+
     except Exception as e:
         flash(f"Contact upload error: {e}")
 
     return redirect("/dashboard")
 
-# ---------------- UPDATE NUMBER INLINE ----------------
+# ---------------- UPDATE NUMBER FROM WEBSITE ----------------
 @app.route("/update-number", methods=["POST"])
 @login_required
 def update_number():
